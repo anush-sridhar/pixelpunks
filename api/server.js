@@ -36,7 +36,7 @@ async function isTokenMinted(tokenId) {
   }
 }
 
-async function mintNFT(recipient, tokenId, isRare) {
+async function mintNFT(recipient, isRare) {
   const privateKey = process.env.MINTER_PRIVATE_KEY;
   const account = web3.eth.accounts.privateKeyToAccount(privateKey);
   web3.eth.accounts.wallet.add(account);
@@ -44,23 +44,55 @@ async function mintNFT(recipient, tokenId, isRare) {
 
   let txData;
   let gasEstimate;
-
+  let nextTokenId;
+  
   if (isRare) {
     txData = nftContract.methods.mintRare(recipient).encodeABI();
     gasEstimate = await nftContract.methods.mintRare(recipient).estimateGas();
+    nextTokenId = mintedTokens.size + 1;
   } else {
     txData = nftContract.methods.mintCommon(recipient).encodeABI();
     gasEstimate = await nftContract.methods.mintCommon(recipient).estimateGas();
+    nextTokenId = mintedTokens.size + 501;
   }
 
   const transaction = { to: contractAddress, data: txData, gas: gasEstimate };
   const signedTransaction = await web3.eth.accounts.signTransaction(transaction, privateKey);
   const txReceipt = await web3.eth.sendSignedTransaction(signedTransaction.rawTransaction);
 
+  mintedTokens.add(nextTokenId);
+
   return txReceipt;
 }
 
-app.post("/mint", async (req, res) => {
+app.post("/mintRare", async (req, res) => {
+  try {
+    const recipient = req.body.recipient;
+
+    if (!recipient) {
+      res.status(400).send("Please provide a recipient address.");
+      return;
+    }
+
+    if (mintedTokens.size >= numberOfNFTs / 2) {
+      res.status(400).send("All rare tokens have been minted.");
+      return;
+    }
+
+    const txReceipt = await mintNFT(recipient, true);
+    const metadataURL = `https://aquamarine-embarrassing-eel-178.mypinata.cloud/ipfs/${folderCID}/metadata-${mintedTokens.size}.json`;
+    if (txReceipt) {
+      res.status(200).json({ 'url': metadataURL, 'hash': txReceipt.transactionHash });
+    } else {
+      throw new Error('Could not mint NFT.');
+    }
+  } catch (error) {
+    console.log("Error:", error.message);
+    res.status(500).send(`Error in /mintRare: ${error}`);
+  }
+});
+
+app.post("/mintCommon", async (req, res) => {
   try {
     const recipient = req.body.recipient;
 
@@ -70,20 +102,12 @@ app.post("/mint", async (req, res) => {
     }
 
     if (mintedTokens.size >= numberOfNFTs) {
-      res.status(400).send("All tokens have been minted.");
+      res.status(400).send("All common tokens have been minted.");
       return;
     }
 
-    let nextTokenId;
-    do {
-      nextTokenId = Math.floor(Math.random() * numberOfNFTs) + 1;
-    } while (mintedTokens.has(nextTokenId) || await isTokenMinted(nextTokenId));
-    mintedTokens.add(nextTokenId);
-
-    console.log("Minting NFT with token ID:", nextTokenId);
-    const metadataURL = `https://aquamarine-embarrassing-eel-178.mypinata.cloud/ipfs/${folderCID}/metadata-${nextTokenId}.json`;
-    console.log("Metadata URL:", metadataURL);
-    const txReceipt = await mintNFT(recipient, nextTokenId, nextTokenId <= 500);
+    const txReceipt = await mintNFT(recipient, false);
+    const metadataURL = `https://aquamarine-embarrassing-eel-178.mypinata.cloud/ipfs/${folderCID}/metadata-${mintedTokens.size + 500}.json`;
     if (txReceipt) {
       res.status(200).json({ 'url': metadataURL, 'hash': txReceipt.transactionHash });
     } else {
@@ -91,7 +115,7 @@ app.post("/mint", async (req, res) => {
     }
   } catch (error) {
     console.log("Error:", error.message);
-    res.status(500).send(`Error in /mint: ${error}`);
+    res.status(500).send(`Error in /mintCommon: ${error}`);
   }
 });
 
